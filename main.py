@@ -1,28 +1,34 @@
 import json
+import os
 import re
 import time
 import sqlite3
 from sqlite3 import Error
 from urllib.parse import urljoin
 
+from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import requests as requests
-from bot_notifications import send_notification
+from bot_notifications import send_notification, wait_for_chat_id
 
-BASE_URL = "https://auto.ria.com"
-TYPE_CAR = "Легковые"
-BRAND_CAR = "Toyota"
-MODEL_CAR = "Sequoia"
+load_dotenv()
+
+BASE_URL = os.getenv("BASE_URL")
+TYPE_CAR = os.getenv("TYPE_CAR")
+BRAND_CAR = os.getenv("BRAND_CAR")
+MODEL_CAR = os.getenv("MODEL_CAR")
+AUTO_FROM_USA = os.getenv("AUTO_FROM_USA")
+CAR_ACCIDENT = os.getenv("CAR_ACCIDENT")
 
 
-def get_soup(search):
+def get_soup(search: str) -> BeautifulSoup:
     link = urljoin(BASE_URL, search)
     page = requests.get(link).content
     soup = BeautifulSoup(page, "html.parser")
     return soup
 
 
-def build_url():
+def build_url() -> str:
     search = "search/?indexName=auto,order_auto,newauto_search"
     soup = get_soup(search)
     select_element = soup.find("select", class_="selected grey", id="category")
@@ -53,15 +59,19 @@ def build_url():
             model_id = model["value"]
             search += f"&model.id[0]={model_id}"
             break
-    # Add "Авто пригнані із США", "Участь в ДТП - Так"
-    search += "&country.import.usa.not=0&damage.not=0"
+
+    if AUTO_FROM_USA:
+        search += "&country.import.usa.not=0"
+
+    if CAR_ACCIDENT:
+        search += "&damage.not=0"
     # Add no pagination
     search += "page=0&size=10000"
 
     return search
 
 
-def create_connection():
+def create_connection() -> sqlite3.Connection:
     conn = None
     try:
         conn = sqlite3.connect("ads_database.db")
@@ -72,7 +82,7 @@ def create_connection():
     return conn
 
 
-def create_tables(conn):
+def create_tables(conn: sqlite3.Connection) -> None:
     ads_table_sql = """
     CREATE TABLE IF NOT EXISTS ads (
         id_auto INTEGER PRIMARY KEY,
@@ -95,7 +105,7 @@ def create_tables(conn):
     conn.commit()
 
 
-def insert_ad(conn, data):
+def insert_ad(conn: sqlite3.Connection, data: dict) -> None:
     placeholders = ", ".join(["?" for _ in data])
     fields = ", ".join(data.keys())
     values = tuple(data.values())
@@ -106,14 +116,16 @@ def insert_ad(conn, data):
     conn.commit()
 
 
-def insert_photos(conn, ad_id, photo_links):
+def insert_photos(
+    conn: sqlite3.Connection, ad_id: int, photo_links: list[str]
+) -> None:
     sql = "INSERT OR IGNORE INTO photos (ad_id, photo_link) VALUES (?, ?)"
     for link in photo_links:
         conn.execute(sql, (ad_id, link))
     conn.commit()
 
 
-def check_ad(processed_ad: dict, ad_id, price_in_db):
+def check_ad(processed_ad: dict, ad_id: int, price_in_db: int) -> None:
     with create_connection() as conn:
         cursor = conn.cursor()
     if not processed_ad:
@@ -135,7 +147,7 @@ def check_ad(processed_ad: dict, ad_id, price_in_db):
             send_notification(ad_id, message)
 
 
-def check_ads(processed_ads: dict):
+def check_ads(processed_ads: dict) -> None:
     with create_connection() as conn:
         create_tables(conn)
         cursor = conn.cursor()
@@ -156,14 +168,16 @@ def check_ads(processed_ads: dict):
             send_notification(id_auto)
 
 
-def parse_single_ad(link: str):
+def parse_single_ad(link: str) -> dict:
     soup = get_soup(link)
 
     photo_tag = soup.find("div", class_="carousel-inner").find(
         "script", type="application/ld+json"
     )
     json_images = json.loads(photo_tag.string)
-    image_links = [image["contentUrl"] for image in json_images["image"]]
+    image_links = [
+        image.get("contentUrl") for image in json_images.get("image")
+    ]
 
     info_tag = soup.find("script", id="ldJson2", type="application/ld+json")
     json_info = json.loads(info_tag.string)
@@ -187,12 +201,12 @@ def parse_single_ad(link: str):
     return ad_data
 
 
-def parse_ads(url):
+def parse_ads(url: str) -> None:
     while True:
         soup = get_soup(url)
         ticket_items = soup.find_all("section", class_="ticket-item")
         processed_ads = {}
-
+        print("Scraping info")
         for ticket_item in ticket_items:
             div = ticket_item.find("div", class_="hide")
             link = div.get("data-link-to-view")
@@ -202,9 +216,10 @@ def parse_ads(url):
 
         check_ads(processed_ads)
         # Wait for 10 minutes before fetching again
-        time.sleep(40)
+        time.sleep(600)
 
 
 if __name__ == "__main__":
+    wait_for_chat_id()
     url = build_url()
     parse_ads(url)

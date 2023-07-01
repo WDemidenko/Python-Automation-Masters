@@ -20,7 +20,7 @@ def wait_for_chat_id() -> None:
         data = response.json()
         if "result" in data and data["result"]:
             chat_id = data["result"][-1]["message"]["chat"]["id"]
-            with open('.env', 'a') as env_file:
+            with open(".env", "a") as env_file:
                 env_file.write(f"\nCHAT_ID={chat_id}")
             break
         else:

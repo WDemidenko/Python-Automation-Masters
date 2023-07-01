@@ -1,15 +1,34 @@
 import os
-
+import time
+import requests
 import telebot
 import urllib.request
 
-BOT_TOKEN = "token"
-CHAT_ID = "chat_id"
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 
-def send_notification(ad_id, message: str = ""):
+def wait_for_chat_id() -> None:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+    while True:
+        response = requests.get(url)
+        data = response.json()
+        if "result" in data and data["result"]:
+            chat_id = data["result"][-1]["message"]["chat"]["id"]
+            with open('.env', 'a') as env_file:
+                env_file.write(f"\nCHAT_ID={chat_id}")
+            break
+        else:
+            print("Waiting for chat ID")
+            time.sleep(1)
+
+
+def send_notification(ad_id: int, message: str = "") -> None:
     from main import create_connection
 
     with create_connection() as conn:
@@ -46,7 +65,8 @@ def send_notification(ad_id, message: str = ""):
             )
 
     if media:
-        bot.send_media_group(chat_id=CHAT_ID, media=media)
+        chat_id = os.getenv("CHAT_ID")
+        bot.send_media_group(chat_id=chat_id, media=media)
 
     # Delete the downloaded photos
     for link in photo_links:
